@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real PDF Chatbot</title>
+  <style>
+    /* --- Reset & Base --- */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f5f5f5; color: #1b1b1b; }
+    button { cursor: pointer; }
+    input, textarea { font-family: inherit; font-size: 1rem; }
+
+    /* --- Container --- */
+    .container { max-width: 800px; margin: 2rem auto; padding: 1rem; }
+    h1 { text-align: center; margin-bottom: 1rem; color: #0a2540; }
+
+    /* --- Chat --- */
+    #chat { border: 2px solid #0a2540; border-radius: 8px; padding: 1rem; height: 400px; overflow-y: auto; background: #ffffff; margin-bottom: 1rem; }
+    .msg { margin-bottom: 1rem; display: flex; }
+    .bubble { padding: 0.6rem 1rem; border-radius: 12px; max-width: 70%; line-height: 1.4; }
+    .user .bubble { background: #0a2540; color: #ffffff; margin-left: auto; }
+    .bot .bubble { background: #e0e7ff; color: #0a2540; margin-right: auto; }
+
+    /* --- Inputs --- */
+    .input-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    #queryInput { flex: 1; padding: 0.5rem 1rem; border: 2px solid #0a2540; border-radius: 8px; }
+    #sendBtn { padding: 0.5rem 1rem; background: #0a2540; color: #ffffff; border: none; border-radius: 8px; }
+
+    /* --- File Upload --- */
+    .file-upload { margin-bottom: 1rem; }
+    input[type="file"] { border: 2px solid #0a2540; border-radius: 8px; padding: 0.3rem; }
+
+   
+    /* --- Buttons --- */
+    .btn { padding: 0.5rem 1rem; border: none; border-radius: 8px; background: #0a2540; color: #ffffff; }
+    .btn:hover { background: #0c2e58; }
+
+    /* --- Accessibility --- */
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PDF Chatbot</h1>
+
+    <!-- Chat Window -->
+    <div id="chat" aria-live="polite"></div>
+
+    <!-- Input Row -->
+    <div class="input-row">
+      <input type="text" id="queryInput" placeholder="Ask me anything..." aria-label="Type your message">
+      <button id="sendBtn" class="btn">Send</button>
+    </div>
+
+    <!-- File Upload -->
+    <div class="file-upload">
+      <label for="fileInput">Upload PDF document :</label>
+      <input type="file" id="fileInput">
+      <button class="btn" id="uploadBtn">Upload</button>
+      <span id="loadingIcon" style="display:none; margin-left:10px;">⏳ Uploading...</span>
+    </div>
+
+  
+  </div>
+
+  <script>
+    const API_BASE = "http://localhost:8000"; // Update with deployed backend URL
+    let lastBotResponse = "";
+
+    // --- Chat Functions ---
+    async function sendQuery() {
+      const input = document.getElementById("queryInput");
+      const query = input.value.trim();
+      if (!query) return;
+
+      appendMessage("user", query);
+
+      try {
+        const res = await fetch(`${API_BASE}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query })
+        });
+        const data = await res.json();
+        lastBotResponse = data.response;
+        appendMessage("bot", formatBotResponse(lastBotResponse));
+      } catch(err) {
+        appendMessage("bot", "Error: could not reach server.");
+        console.error(err);
+      }
+      input.value = "";
+    }
+
+    function formatBotResponse(text) {
+    // Bold: replace **something** with <b>something</b>
+    text = text.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>");
+
+    
+    // Add line breaks after sentence-ending full stops, but ignore numbers (lists) and common abbreviations
+    text = text.replace(/(?<!\b(?:Mr|Mrs|Ms|Dr|Prof|e\.g|i\.e))(?<!\d)(\.)(\s+)(?=[A-Z])/g, "$1<br><br>");
+
+
+    // Optional: double line breaks for paragraphs if you detect \n\n
+    text = text.replace(/\n\s*\n/g, "<br><br>");
+
+    return text;
+    }
+    function appendMessage(role, text) {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.className = `msg ${role}`;
+      div.innerHTML = `<div class="bubble ${role}">${text}</div>`;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    document.getElementById("sendBtn").onclick = sendQuery;
+    document.getElementById("queryInput").addEventListener("keypress", e => {
+      if(e.key === "Enter") sendQuery();
+    });
+
+    // --- File Upload ---
+    document.getElementById("uploadBtn").onclick = async () => {
+      const fileInput = document.getElementById("fileInput");
+      const loadingIcon = document.getElementById("loadingIcon")
+      if (!fileInput.files.length) return alert("Select a file first");
+
+      const formData = new FormData();
+      formData.append("uploaded_file", fileInput.files[0]);
+
+      try {
+        loadingIcon.style.display = "inline";
+        document.getElementById("uploadBtn").disabled = true;
+        const res = await fetch(`${API_BASE}/upload`, {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+        alert(`Upload successful! Doc ID: ${data.document_id}`);
+      } catch(err) {
+        alert("Upload failed.");
+        console.error(err);
+      }finally {
+      // Re-enable button + hide loading
+      uploadBtn.disabled = false;
+      loadingIcon.style.display = "none";
+        }
+    };
+
+    async function loadDocuments() {
+        const response = await fetch(`${API_BASE}/view-all`);
+        const data = await response.json();
+
+        const container = document.getElementById("doc-list");
+        container.innerHTML = ""; // clear old
+
+        if (data.status === "empty") {
+            container.innerHTML = "<p>No documents found.</p>";
+            return;
+        }
+
+        data.documents.forEach(doc => {
+            const item = document.createElement("div");
+            item.className = "doc-item";
+            item.innerHTML = `
+                <p><strong>ID:</strong> ${doc.id}</p>
+                <p><em>${doc.preview}</em></p>
+                <button onclick="deleteDoc('${doc.id}')">Delete</button>
+                <hr>
+            `;
+            container.appendChild(item);
+        });
+    }
+
+    async function deleteDoc(docId) {
+        if (!confirm("Are you sure you want to delete this document?")) return;
+
+        const response = await fetch(`/delete/${docId}`, { method: "DELETE" });
+        const result = await response.json();
+
+    alert(result.message || "Deleted");
+    loadDocuments(); // refresh list
+    }
+
+window.onload = loadDocuments;
+    // --- TTS Playback ---
+    document.getElementById("playTTSBtn").onclick = async () => {
+      if (!lastBotResponse) return alert("No bot response to play");
+      try {
+        const res = await fetch(`${API_BASE}/TTS`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: lastBotResponse })
+        });
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.play();
+      } catch(err) {
+        alert("Failed to play TTS.");
+        console.error(err);
+      }
+    };
+
+    // --- Record Audio ---
+    document.getElementById("recordAudioBtn").onclick = async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        return alert("Audio recording not supported in this browser");
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        const audioChunks = [];
+
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+          const formData = new FormData();
+          formData.append("file", audioBlob, "voice.wav");
+
+          const res = await fetch(`${API_BASE}/record-audio`, {
+            method: "POST",
+            body: formData
+          });
+          const data = await res.json();
+          appendMessage("user", data.query);
+          sendQueryFromVoice(data.query);
+        };
+
+        mediaRecorder.start();
+        alert("Recording 5 seconds...");
+        setTimeout(() => mediaRecorder.stop(), 5000);
+      } catch(err) {
+        alert("Audio recording failed");
+        console.error(err);
+      }
+    };
+
+    async function sendQueryFromVoice(query) {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query })
+      });
+      const data = await res.json();
+      lastBotResponse = data.response;
+      appendMessage("bot", lastBotResponse);
+    }
+  </script>
+</body>
+</html>
